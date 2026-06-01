@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>读书伴侣 · AI Reading Companion</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0e0e11;
+  --surface: #16161a;
+  --surface2: #1e1e24;
+  --border: rgba(255,255,255,0.08);
+  --text: #e8e6f0;
+  --muted: #7a7890;
+  --accent: #7c6af7;
+  --accent2: #4ecdc4;
+  --radius: 14px;
+  --font: Georgia, serif;
+  --sans: system-ui, -apple-system, sans-serif;
+}
+html, body { height: 100%; overflow: hidden; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); display: flex; flex-direction: column; }
+#app { display: flex; height: 100vh; overflow: hidden; }
+
+/* ── SIDEBAR ── */
+#sidebar {
+  width: 280px; min-width: 280px;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#sidebar-header { padding: 20px 18px 14px; border-bottom: 1px solid var(--border); }
+#sidebar-header h1 { font-size: 18px; font-weight: 600; color: var(--text); font-family: var(--sans); }
+#sidebar-header p { font-size: 12px; color: var(--muted); margin-top: 2px; font-family: var(--sans); }
+
+#api-section { padding: 12px 18px; border-bottom: 1px solid var(--border); }
+#api-section label { font-size: 11px; color: var(--muted); font-family: var(--sans); text-transform: uppercase; letter-spacing: 0.5px; }
+#api-key-input {
+  width: 100%; margin-top: 6px;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 10px; border-radius: 8px;
+  font-size: 12px; font-family: var(--sans); outline: none;
+}
+#api-key-input:focus { border-color: var(--accent); }
+
+#upload-section { padding: 12px 18px; border-bottom: 1px solid var(--border); }
+#drop-zone {
+  border: 1.5px dashed rgba(124,106,247,0.4);
+  border-radius: 10px; padding: 18px 12px;
+  text-align: center; cursor: pointer;
+  transition: all 0.2s; background: rgba(124,106,247,0.04);
+}
+#drop-zone:hover, #drop-zone.drag { border-color: var(--accent); background: rgba(124,106,247,0.1); }
+#drop-zone .dz-icon { font-size: 28px; margin-bottom: 6px; }
+#drop-zone p { font-size: 12px; color: var(--muted); font-family: var(--sans); }
+#drop-zone .file-types { margin-top: 5px; font-size: 10px; color: rgba(124,106,247,0.8); font-family: var(--sans); }
+#file-input { display: none; }
+
+#book-info { padding: 12px 18px; border-bottom: 1px solid var(--border); display: none; }
+#book-title { font-size: 13px; font-weight: 600; color: var(--text); font-family: var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#book-meta { font-size: 11px; color: var(--muted); margin-top: 3px; font-family: var(--sans); }
+#book-progress { height: 3px; background: var(--surface2); border-radius: 2px; margin-top: 8px; }
+#book-progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 2px; transition: width 0.3s; width: 0%; }
+
+#toc-section { flex: 1; overflow-y: auto; padding: 10px 0; }
+#toc-section::-webkit-scrollbar { width: 3px; }
+#toc-section::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.toc-label { font-size: 10px; color: var(--muted); font-family: var(--sans); text-transform: uppercase; letter-spacing: 0.5px; padding: 0 18px 6px; }
+.toc-item {
+  padding: 8px 18px; font-size: 12px; cursor: pointer;
+  font-family: var(--sans); color: var(--muted);
+  border-left: 2px solid transparent; transition: all 0.15s;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.toc-item:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+.toc-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(124,106,247,0.06); }
+
+#mode-toggle { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
+.mode-btn {
+  flex: 1; padding: 7px 0; border-radius: 7px;
+  border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 11px; font-family: var(--sans); cursor: pointer; transition: all 0.15s;
+}
+.mode-btn.active { background: var(--accent); border-color: var(--accent); color: white; }
+
+/* ── MAIN ── */
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+
+#reader-panel { flex: 1; overflow-y: auto; padding: 40px 52px; scroll-behavior: smooth; }
+#reader-panel::-webkit-scrollbar { width: 5px; }
+#reader-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+#welcome-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; }
+#welcome-screen .big-icon { font-size: 64px; margin-bottom: 20px; opacity: 0.35; }
+#welcome-screen h2 { font-size: 24px; color: var(--muted); font-weight: 400; }
+#welcome-screen p { font-size: 14px; color: rgba(122,120,144,0.6); margin-top: 8px; font-family: var(--sans); }
+
+#content-area { display: none; }
+.page-chunk { margin-bottom: 2.5rem; padding-bottom: 2.5rem; border-bottom: 1px solid var(--border); }
+.page-chunk:last-child { border-bottom: none; }
+.chunk-num { font-size: 11px; color: var(--muted); font-family: var(--sans); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+.page-text { font-size: 17px; line-height: 1.9; color: var(--text); white-space: pre-wrap; }
+
+.ai-box {
+  margin-top: 20px; background: rgba(124,106,247,0.07);
+  border: 1px solid rgba(124,106,247,0.2); border-radius: 12px; padding: 16px 20px;
+}
+.ai-box-header {
+  font-size: 11px; color: var(--accent); font-family: var(--sans);
+  text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px;
+}
+.ai-box-text { font-size: 15px; line-height: 1.8; color: rgba(232,230,240,0.85); font-family: var(--sans); white-space: pre-wrap; }
+
+.explain-btn {
+  margin-top: 14px; padding: 8px 16px; border-radius: 8px;
+  border: 1px solid rgba(124,106,247,0.4); background: transparent;
+  color: var(--accent); font-size: 12px; font-family: var(--sans);
+  cursor: pointer; transition: all 0.15s;
+}
+.explain-btn:hover { background: rgba(124,106,247,0.1); }
+.explain-btn:disabled { opacity: 0.4; cursor: default; }
+
+.dots span { animation: blink 1.2s infinite; font-size: 18px; color: var(--accent); }
+.dots span:nth-child(2) { animation-delay: 0.2s; }
+.dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%,80%,100%{opacity:0.2} 40%{opacity:1} }
+
+/* ── CHAT ── */
+#chat-panel {
+  height: 300px; border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; background: var(--surface);
+}
+#status-bar { padding: 6px 20px 0; font-size: 11px; color: var(--muted); font-family: var(--sans); flex-shrink: 0; }
+#chat-messages { flex: 1; overflow-y: auto; padding: 10px 20px; display: flex; flex-direction: column; gap: 10px; }
+#chat-messages::-webkit-scrollbar { width: 3px; }
+#chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.msg { max-width: 82%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.65; font-family: var(--sans); }
+.msg.user { align-self: flex-end; background: var(--accent); color: white; border-bottom-right-radius: 4px; }
+.msg.ai { align-self: flex-start; background: var(--surface2); color: var(--text); border-bottom-left-radius: 4px; border: 1px solid var(--border); white-space: pre-wrap; }
+.msg .thinking { color: var(--muted); font-style: italic; }
+
+#chat-input-row { display: flex; gap: 8px; padding: 8px 16px 14px; align-items: flex-end; }
+#chat-input {
+  flex: 1; background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); padding: 10px 14px; border-radius: 10px;
+  font-size: 14px; font-family: var(--sans); resize: none;
+  min-height: 42px; max-height: 120px; outline: none; line-height: 1.5;
+}
+#chat-input:focus { border-color: var(--accent); }
+#chat-input::placeholder { color: var(--muted); }
+#send-btn {
+  width: 42px; height: 42px; border-radius: 10px;
+  background: var(--accent); border: none; color: white;
+  font-size: 20px; cursor: pointer; flex-shrink: 0;
+  transition: opacity 0.15s; display: flex; align-items: center; justify-content: center;
+}
+#send-btn:hover { opacity: 0.85; }
+#send-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ── LOADING ── */
+#loading-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(14,14,17,0.88); z-index: 100;
+  align-items: center; justify-content: center; flex-direction: column; gap: 14px;
+}
+#loading-overlay.show { display: flex; }
+.spinner { width: 36px; height: 36px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading-text { font-size: 14px; color: var(--muted); font-family: var(--sans); }
+
+/* ── MOBILE / iPAD ── */
+@media (max-width: 768px) {
+  #sidebar { width: 240px; min-width: 240px; }
+  #reader-panel { padding: 24px 24px; }
+  .page-text { font-size: 16px; }
+}
+@media (max-width: 600px) {
+  #sidebar { display: none; }
+  #reader-panel { padding: 20px 18px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══ SIDEBAR ══ -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>📖 读书伴侣</h1>
+      <p>AI Reading Companion</p>
+    </div>
+
+    <div id="api-section">
+      <label>MiniMax API Key</label>
+      <input type="password" id="api-key-input" placeholder="输入你的 API Key…" />
+    </div>
+
+    <div id="upload-section">
+      <div id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="dz-icon">📚</div>
+        <p>点击上传 / 拖拽书籍</p>
+        <div class="file-types">PDF · TXT · EPUB</div>
+      </div>
+      <input type="file" id="file-input" accept=".pdf,.txt,.epub" />
+    </div>
+
+    <div id="book-info">
+      <div id="book-title"></div>
+      <div id="book-meta"></div>
+      <div id="book-progress"><div id="book-progress-fill"></div></div>
+    </div>
+
+    <div id="toc-section">
+      <div class="toc-label">目录</div>
+      <div id="toc-list">
+        <div style="padding:4px 18px;font-size:12px;color:var(--muted);font-family:var(--sans)">请先上传书籍</div>
+      </div>
+    </div>
+
+    <div id="mode-toggle">
+      <button class="mode-btn active" id="btn-read" onclick="setMode('read')">阅读模式</button>
+      <button class="mode-btn" id="btn-study" onclick="setMode('study')">精读模式</button>
+    </div>
+  </div>
+
+  <!-- ══ MAIN ══ -->
+  <div id="main">
+    <div id="reader-panel">
+      <div id="welcome-screen">
+        <div class="big-icon">🌙</div>
+        <h2>上传一本书，开始学习</h2>
+        <p>支持 PDF · TXT · EPUB &nbsp;·&nbsp; 中英文均可</p>
+      </div>
+      <div id="content-area"></div>
+    </div>
+
+    <div id="chat-panel">
+      <div id="status-bar">就绪 · 上传书籍后可开始对话</div>
+      <div id="chat-messages">
+        <div class="msg ai">你好！请上传书籍，然后我可以帮你讲解内容、回答问题 📖</div>
+      </div>
+      <div id="chat-input-row">
+        <textarea id="chat-input" rows="1" placeholder="问我任何关于这本书的问题… (Enter 发送，Shift+Enter 换行)"></textarea>
+        <button id="send-btn" onclick="sendChat()">↑</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div id="loading-text">正在处理…</div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let bookText = '';
+let bookChunks = [];
+let bookTitle = '';
+let currentMode = 'read';
+const CHUNK_SIZE = 1200;
+
+// ── API ──
+function getKey() { return document.getElementById('api-key-input').value.trim(); }
+
+async function callMinimax(userMsg, systemMsg = '') {
+  const key = getKey();
+  if (!key) { addMsg('ai', '⚠️ 请先在左侧输入 MiniMax API Key'); return null; }
+
+  const messages = [];
+  if (systemMsg) messages.push({ role: 'system', content: systemMsg });
+  messages.push({ role: 'user', content: userMsg });
+
+  try {
+    const res = await fetch('https://api.minimaxi.chat/v1/text/chatcompletion_v2', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ model: 'MiniMax-Text-01', messages, max_tokens: 1024, temperature: 0.6 })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data));
+    return data.choices?.[0]?.message?.content || '(空响应)';
+  } catch (e) {
+    return `❌ 错误：${e.message}`;
+  }
+}
+
+// ── FILE LOADING ──
+document.getElementById('file-input').addEventListener('change', async e => {
+  if (e.target.files[0]) await loadFile(e.target.files[0]);
+});
+
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', async e => {
+  e.preventDefault(); dz.classList.remove('drag');
+  if (e.dataTransfer.files[0]) await loadFile(e.dataTransfer.files[0]);
+});
+
+async function loadFile(file) {
+  showLoading('正在读取文件…');
+  bookTitle = file.name.replace(/\.[^.]+$/, '');
+  try {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (ext === 'pdf') bookText = await parsePDF(file);
+    else if (ext === 'epub') bookText = await parseEPUB(file);
+    else bookText = await file.text();
+
+    if (!bookText.trim()) throw new Error('文件内容为空，请检查文件');
+    await processBook();
+  } catch (e) {
+    hideLoading();
+    addMsg('ai', `读取失败：${e.message}`);
+  }
+}
+
+async function parsePDF(file) {
+  const ab = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const c = await page.getTextContent();
+    text += c.items.map(s => s.str).join(' ') + '\n\n';
+  }
+  return text;
+}
+
+async function parseEPUB(file) {
+  const ab = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(ab);
+  let text = '';
+  const htmlFiles = Object.keys(zip.files)
+    .filter(n => /\.(html|htm|xhtml)$/i.test(n))
+    .sort();
+  for (const name of htmlFiles.slice(0, 60)) {
+    const raw = await zip.files[name].async('string');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = raw;
+    text += (tmp.textContent || tmp.innerText || '') + '\n\n';
+  }
+  return text || '无法解析EPUB内容，请转换为TXT后重试';
+}
+
+async function processBook() {
+  updateLoading('正在分段处理…');
+  const words = bookText.split(/\s+/).filter(Boolean);
+  bookChunks = [];
+  for (let i = 0; i < words.length; i += CHUNK_SIZE) {
+    bookChunks.push(words.slice(i, i + CHUNK_SIZE).join(' '));
+  }
+
+  // Update book info
+  const info = document.getElementById('book-info');
+  info.style.display = 'block';
+  document.getElementById('book-title').textContent = bookTitle;
+  document.getElementById('book-meta').textContent =
+    `${bookChunks.length} 段 · 约 ${Math.round(bookText.length / 500)} 页 · ${(bookText.length / 1000).toFixed(0)}k 字`;
+
+  buildTOC();
+  renderContent();
+  hideLoading();
+
+  document.getElementById('welcome-screen').style.display = 'none';
+  document.getElementById('content-area').style.display = 'block';
+  document.getElementById('status-bar').textContent = `已加载：${bookTitle} · ${bookChunks.length} 段`;
+  addMsg('ai', `📖 已加载《${bookTitle}》，共 ${bookChunks.length} 段。\n\n你可以：\n• 直接在下方提问书中内容\n• 切换「精读模式」点击每段的 AI 讲解\n• 在左侧目录快速跳转`);
+}
+
+// ── TOC ──
+function buildTOC() {
+  const list = document.getElementById('toc-list');
+  list.innerHTML = '';
+  const count = Math.min(bookChunks.length, 40);
+  for (let i = 0; i < count; i++) {
+    const preview = bookChunks[i].slice(0, 38).replace(/\s+/g, ' ');
+    const div = document.createElement('div');
+    div.className = 'toc-item' + (i === 0 ? ' active' : '');
+    div.id = `toc-${i}`;
+    div.textContent = `${i + 1}. ${preview}…`;
+    div.onclick = () => scrollToChunk(i);
+    list.appendChild(div);
+  }
+}
+
+function setActiveTOC(i) {
+  document.querySelectorAll('.toc-item').forEach((el, idx) => el.classList.toggle('active', idx === i));
+  const pct = bookChunks.length > 1 ? Math.round((i / (bookChunks.length - 1)) * 100) : 0;
+  document.getElementById('book-progress-fill').style.width = pct + '%';
+}
+
+function scrollToChunk(i) {
+  const el = document.getElementById(`chunk-${i}`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── RENDER ──
+function setMode(m) {
+  currentMode = m;
+  document.getElementById('btn-read').classList.toggle('active', m === 'read');
+  document.getElementById('btn-study').classList.toggle('active', m === 'study');
+  if (bookChunks.length) renderContent();
+}
+
+function renderContent() {
+  const area = document.getElementById('content-area');
+  area.innerHTML = '';
+
+  bookChunks.forEach((chunk, i) => {
+    const div = document.createElement('div');
+    div.className = 'page-chunk';
+    div.id = `chunk-${i}`;
+
+    const num = document.createElement('div');
+    num.className = 'chunk-num';
+    num.textContent = `§ ${i + 1} / ${bookChunks.length}`;
+
+    const text = document.createElement('div');
+    text.className = 'page-text';
+    text.textContent = chunk;
+
+    div.appendChild(num);
+    div.appendChild(text);
+
+    if (currentMode === 'study') {
+      const btn = document.createElement('button');
+      btn.className = 'explain-btn';
+      btn.textContent = '✨ AI 讲解这段';
+      btn.onclick = () => explainChunk(chunk, div, btn);
+      div.appendChild(btn);
+    }
+
+    area.appendChild(div);
+  });
+
+  // Intersection observer → sync TOC
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const idx = parseInt(e.target.id.split('-')[1]);
+        if (!isNaN(idx)) setActiveTOC(idx);
+      }
+    });
+  }, { threshold: 0.25 });
+  document.querySelectorAll('.page-chunk').forEach(el => observer.observe(el));
+}
+
+// ── AI EXPLAIN ──
+async function explainChunk(chunk, container, btn) {
+  btn.disabled = true;
+  btn.textContent = '思考中…';
+
+  const old = container.querySelector('.ai-box');
+  if (old) old.remove();
+
+  const box = document.createElement('div');
+  box.className = 'ai-box';
+  box.innerHTML = `<div class="ai-box-header">✦ AI 讲解</div><div class="ai-box-text"><span class="dots"><span>.</span><span>.</span><span>.</span></span></div>`;
+  container.appendChild(box);
+
+  const sys = `你是一位博学的读书导师，擅长中英文书籍讲解。请对以下书中片段进行深度解析：指出核心观点、背景知识、深层含义，以及值得思考的问题。语言清晰有洞察力，中文回答。`;
+  const result = await callMinimax(`请讲解以下内容：\n\n${chunk.slice(0, 900)}`, sys);
+
+  box.querySelector('.ai-box-text').textContent = result || '讲解失败，请重试';
+  btn.textContent = '🔄 重新讲解';
+  btn.disabled = false;
+}
+
+// ── CHAT ──
+function addMsg(role, text) {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = `msg ${role}`;
+  div.textContent = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = '';
+  input.style.height = 'auto';
+
+  addMsg('user', q);
+  const thinking = addMsg('ai', '');
+  thinking.innerHTML = '<span class="thinking">思考中…</span>';
+
+  document.getElementById('send-btn').disabled = true;
+
+  const ctx = bookText ? bookText.slice(0, 6000) : '';
+  const sys = bookText
+    ? `你是一位智慧的读书伴侣，正在帮用户阅读《${bookTitle}》。\n\n书籍内容摘录（供参考）：\n${ctx}\n\n请基于书中内容回答问题，观点要直接、有深度，中文回答。`
+    : `你是一位读书伴侣。用户还未上传书籍，请友好引导他上传 PDF、TXT 或 EPUB 文件后开始学习。`;
+
+  const result = await callMinimax(q, sys);
+  thinking.innerHTML = '';
+  thinking.textContent = result || '抱歉，请重试';
+
+  document.getElementById('send-btn').disabled = false;
+  document.getElementById('chat-messages').scrollTop = 999999;
+}
+
+document.getElementById('chat-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+document.getElementById('chat-input').addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+
+// ── LOADING ──
+function showLoading(txt) {
+  document.getElementById('loading-text').textContent = txt;
+  document.getElementById('loading-overlay').classList.add('show');
+}
+function updateLoading(txt) { document.getElementById('loading-text').textContent = txt; }
+function hideLoading() { document.getElementById('loading-overlay').classList.remove('show'); }
+</script>
+</body>
+</html>
